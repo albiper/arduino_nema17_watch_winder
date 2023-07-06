@@ -32,13 +32,11 @@ void logger(const char *messagePattern, ...);
 #define ROTATIONS_R_PER_CYCLE 5 // default 2
 #define ROTATIONS_L_PER_CYCLE 5 // default 2
 #define PAUSE_MIN 30            // default 35
-#define ROT_STEPS 4096
+#define ROT_STEPS 1600
 
 // motor
-#define MAX_SPEED 2000
+#define MAX_SPEED 1000
 #define ACCELERATION 1000
-#define ROT_R 5 // default 2
-#define ROT_L 5 // default 2
 
 // process state enum
 enum StateType
@@ -252,7 +250,8 @@ void rightState()
 {
   if (stateUpdated)
   {
-    targetPos -= (ROT_R * ROT_STEPS);
+    digitalWrite(EN_PIN, LOW);
+    targetPos -= (ROTATIONS_R_PER_CYCLE * ROT_STEPS);
     stepper.moveTo(targetPos);
 
     if (remainingCycles > 1)
@@ -279,7 +278,8 @@ void leftState()
 {
   if (stateUpdated)
   {
-    targetPos += (ROT_L * ROT_STEPS);
+    digitalWrite(EN_PIN, LOW);
+    targetPos += (ROTATIONS_L_PER_CYCLE * ROT_STEPS);
     stepper.moveTo(targetPos);
 
     logger("Winder moving anticlockwise");
@@ -306,6 +306,7 @@ void stopState()
 {
   if (stateUpdated)
   {
+    digitalWrite(EN_PIN, HIGH);
     logger("Winder stopped");
   }
 }
@@ -314,6 +315,7 @@ void pauseState()
 {
   if (stateUpdated)
   {
+    digitalWrite(EN_PIN, HIGH);
     logger("Pause state");
     StartTime = millis();
     lastPauseMinute = false;
@@ -342,8 +344,15 @@ void rthState()
   if (stateUpdated)
   {
     logger("Returning to home");
-    // TODO - Optimize to return to nearest center instead of home
-    stepper.moveTo(0);
+
+    Serial.println(stepper.currentPosition());
+    int target = round(stepper.currentPosition() / double(ROT_STEPS));
+
+    Serial.println(target);
+    Serial.println(target * ROT_STEPS);
+    stepper.stop();
+    stepper.moveTo(target * ROT_STEPS);
+    Serial.println(stepper.distanceToGo());
   }
 
   if (stepper.distanceToGo() != 0)
@@ -352,6 +361,7 @@ void rthState()
   }
   else
   {
+    stepper.setCurrentPosition(0);
     currentState = W_STOP;
   }
 }
