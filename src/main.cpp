@@ -31,8 +31,7 @@ void logger(const char *messagePattern, ...);
 #define CYCLES_PER_RUN 5
 #define ROTATIONS_R_PER_CYCLE 5 // default 2
 #define ROTATIONS_L_PER_CYCLE 5 // default 2
-// #define PAUSE_MIN 30            // default 35
-#define PAUSE_MIN 1 // default 35
+#define PAUSE_MIN 30            // default 35
 #define ROT_STEPS 4096
 
 // motor
@@ -45,11 +44,11 @@ void logger(const char *messagePattern, ...);
 enum StateType
 {
   W_NONE,
-  W_STOP,  // 0 - Winder unoperational
-  W_RIGHT, // 1 - Winder rotating CLOCKWISE
-  W_LEFT,  // 2 - Winder rotating ANTICLOCKWISE
-  W_PAUSE, // 3 - Winder waiting between cycles
-  W_RTH    // 4 - Winder return to center
+  W_STOP,  // 1 - Winder unoperational
+  W_RIGHT, // 2 - Winder rotating CLOCKWISE
+  W_LEFT,  // 3 - Winder rotating ANTICLOCKWISE
+  W_PAUSE, // 4 - Winder waiting between cycles
+  W_RTH    // 5 - Winder return to center
 };
 
 AccelStepper stepper(1, STEP_PIN, DIR_PIN);
@@ -66,11 +65,10 @@ int LedOn = true;
 int remainingCycles = CYCLES_PER_RUN;
 int stateUpdated = false;
 int lastPauseMinute = false;
-int rthActivated = false;
-int hasToStart = false;
-int hasToContinue = false;
 long StartTime = 0;
 int targetPos = 0;
+int forceLedChange = false;
+const long pauseMillis = long(PAUSE_MIN) * 60L * 1000L;
 
 void setup()
 {
@@ -85,6 +83,7 @@ void setup()
   stepper.setCurrentPosition(0);
 
   ButtonConfig *buttonConfig = pwr_sw.getButtonConfig();
+  buttonConfig->setDoubleClickDelay(700);
   buttonConfig->setEventHandler(handleButtonEvent);
   buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
@@ -108,6 +107,7 @@ void loop()
     stateUpdated = true;
 
   previousState = currentState;
+  managePowerLed();
 
   switch (currentState)
   {
@@ -134,7 +134,7 @@ void loop()
     break;
   }
 
-  pwr_led.Update();
+  stateUpdated = false;
 }
 
 void moveStepperTo(int position)
@@ -173,101 +173,96 @@ void handleButtonClick()
     // if idle or pause, START winding
     remainingCycles = CYCLES_PER_RUN;
     logger(">> Click: Start Winding");
-    rthActivated = false;
     currentState = W_RIGHT;
   }
 }
 
 void handleButtonLongClick()
 {
-  if (currentState == W_LEFT || currentState == W_RIGHT || currentState == W_PAUSE)
+  if (currentState == W_PAUSE)
+  {
+    currentState = W_STOP;
+  }
+  else if (currentState == W_LEFT || currentState == W_RIGHT)
   {
     // if winding left/right or pause between rotations, STOP winding
     logger(">> LongPress: Stop Winding");
-    rthActivated = true;
-    hasToContinue = false;
-    pwr_led.Reset();
-
-    // if pause between rotations, led ON, else led BLINK
-    if (currentState == W_PAUSE)
-      pwr_led.On();
-    else
-      pwr_led.Blink(100, 500).Forever();
+    currentState = W_RTH;
   }
 }
 
 void handleButtonDoubleClick()
 {
-  pwr_led.Reset();
-  if (LedOn)
-  {
-    // toggle led activation on long click
-    logger(">> DoubleClick: LED Disabled");
-    pwr_led.Stop();
-    LedOn = false;
-  }
-  else
-  {
-    // toggle led activation on long click
-    logger(">> DoubleClick: LED Enabled");
-    LedOn = true;
-  }
+  logger(">> Double Click: Toggle led activation");
+  LedOn = !LedOn;
+  forceLedChange = true;
 
   managePowerLed();
 }
 
 void managePowerLed()
 {
-  if (LedOn)
+  if (stateUpdated || forceLedChange)
   {
-    switch (currentState)
+    forceLedChange = false;
+    if (LedOn)
     {
-    case W_STOP:
-      logger("<< LED: On");
-      pwr_led.On();
-      break;
-
-    case W_PAUSE:
-      if (!currentState)
+      switch (currentState)
       {
-        logger("<< LED: Breathe Slow");
-        pwr_led.Breathe(5000).Forever();
-      }
-      else
-      {
-        logger("<< LED: Breathe Fast");
-        pwr_led.Breathe(1000).Forever();
-      }
-      break;
+      case W_STOP:
+        pwr_led.Breathe(5000).DelayAfter(5000).Forever();
+        break;
 
-    case W_LEFT:
-    case W_RIGHT:
-      logger("<< LED: Blink");
-      pwr_led.Blink(1000, 200).Forever();
-      break;
+      case W_PAUSE:
+        if (lastPauseMinute)
+        {
+          pwr_led.Breathe(1000).DelayAfter(0).Forever();
+        }
+        else
+        {
+          pwr_led.Breathe(5000).DelayAfter(0).Forever();
+        }
+        break;
 
-    default:
-      logger("<< LED: WTF?");
-      pwr_led.Blink(50, 50).Forever();
-      break;
+      case W_LEFT:
+      case W_RIGHT:
+        pwr_led.Blink(1000, 1000).DelayAfter(0).Forever();
+        break;
+
+      case W_RTH:
+        pwr_led.Blink(500, 100).DelayAfter(0).Forever();
+        break;
+
+      default:
+        logger("<< LED: WTF?");
+        pwr_led.Blink(50, 50).DelayAfter(0).Forever();
+        break;
+      }
+    }
+    else
+    {
+      pwr_led.Off();
     }
   }
+
+  pwr_led.Update();
 }
 
 void rightState()
 {
-  if (rthActivated)
-  {
-    currentState = W_RTH;
-    return;
-  }
-
   if (stateUpdated)
   {
     targetPos -= (ROT_R * ROT_STEPS);
     stepper.moveTo(targetPos);
-    stateUpdated = false;
-    logger("Winder moving clockwise - Remaining %d cycles", remainingCycles);
+
+    if (remainingCycles > 1)
+    {
+      logger("Winder moving clockwise - Remaining %d cycles", remainingCycles);
+    }
+    else
+    {
+      logger("Winder moving clockwise - Last cycle");
+    }
   }
 
   if (stepper.distanceToGo() != 0)
@@ -282,17 +277,11 @@ void rightState()
 
 void leftState()
 {
-  if (rthActivated)
-  {
-    currentState = W_RTH;
-    return;
-  }
-
   if (stateUpdated)
   {
     targetPos += (ROT_L * ROT_STEPS);
     stepper.moveTo(targetPos);
-    stateUpdated = false;
+
     logger("Winder moving anticlockwise");
   }
 
@@ -317,14 +306,7 @@ void stopState()
 {
   if (stateUpdated)
   {
-    stateUpdated = false;
     logger("Winder stopped");
-  }
-
-  if (hasToStart)
-  {
-    hasToStart = false;
-    currentState = W_RIGHT;
   }
 }
 
@@ -334,47 +316,44 @@ void pauseState()
   {
     logger("Pause state");
     StartTime = millis();
-    stateUpdated = false;
+    lastPauseMinute = false;
   }
 
   long temp = millis() - StartTime;
-  long delta = 60L * 1000L;
-
-  if (hasToStart)
-  {
-    hasToStart = false;
-    currentState = W_RIGHT;
-    return;
-  }
 
   // run once, 1 minute before PAUSE_MIN elapses
-  if ((!lastPauseMinute) && (temp > (delta * long(PAUSE_MIN - 1))))
+  if ((!lastPauseMinute) && (temp > pauseMillis - 60000))
   {
     logger("<< Winder: Restarting in 1 minute");
-    if (hasToContinue && LedOn)
-    {
-      pwr_led.Reset();
-      pwr_led.Breathe(1000).Forever();
-    }
     lastPauseMinute = true;
+    forceLedChange = true;
   }
   // PAUSE_MIN has elapsed && Continue
-  else if (hasToContinue && temp > (delta * long(PAUSE_MIN)))
+  else if (temp > pauseMillis)
   {
     lastPauseMinute = false;
+    remainingCycles = CYCLES_PER_RUN;
     currentState = W_RIGHT;
   }
 }
 
 void rthState()
 {
-  logger("Returning to home");
-  stepper.moveTo(0);
-  stepper.runToPosition();
+  if (stateUpdated)
+  {
+    logger("Returning to home");
+    // TODO - Optimize to return to nearest center instead of home
+    stepper.moveTo(0);
+  }
 
-  currentState = W_STOP;
-  hasToContinue = false;
-  hasToStart = false;
+  if (stepper.distanceToGo() != 0)
+  {
+    stepper.run();
+  }
+  else
+  {
+    currentState = W_STOP;
+  }
 }
 
 void logger(const char *messagePattern, ...)
