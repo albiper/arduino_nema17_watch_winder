@@ -193,8 +193,8 @@ void handleButtonLongClick()
 
 void handleButtonDoubleClick()
 {
-  logger(">> Double Click: Toggle led activation");
   LedOn = !LedOn;
+  logger(">> Double Click: Toggle led activation: %s", LedOn ? "On" : "Off");
   forceLedChange = true;
 
   managePowerLed();
